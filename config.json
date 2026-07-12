@@ -1,0 +1,72 @@
+{
+    "energyplus_dir": "",
+    "weather_file": "",
+    "idf_version": "25.2",
+    "references": {
+        "loads.heating_setpoint_c / cooling_setpoint_c": "ASHRAE 55-2020 comfort range (heating 20C / cooling 26C)",
+        "loads.people_per_area": "ASHRAE 62.1-2022 Table 6-1 office default occupant density (~5 people / 100 m2 = 0.05; 0.08 for denser use)",
+        "loads.lights_w_per_area": "ASHRAE 90.1-2019 Table 9.5.1 office LPD ~8.5 W/m2",
+        "loads.equipment_w_per_area": "ASHRAE 90.1 user's manual typical office plug load ~10 W/m2",
+        "loads.ventilation_l_s_person / ventilation_l_s_m2": "ASHRAE 62.1-2022 Table 6-1 office: 2.5 L/s-person + 0.3 L/s-m2",
+        "loads.infiltration_ach": "ASHRAE Handbook Fundamentals, typical mid-tightness envelope 0.5 ACH",
+        "constructions.*": "ASHRAE 90.1-2019 climate zone 4-5 prescriptive U-values (approx.)",
+        "hvac.*": "EnergyPlus IdealLoadsAirSystem supply limits (ASHRAE-style dual setpoint control)"
+    },
+    "conversion": {
+        "window_mode": "auto",
+        "window_wall_ratio": 0.3,
+        "plane_merge_angle_deg": 5.0,
+        "plane_merge_dist": 0.02,
+        "adjacency_gap": 0.5,
+        "adjacency_overlap_ratio": 0.3,
+        "ground_level_tol": 0.3,
+        "min_surface_area": 0.05,
+        "max_vertices_per_surface": 60
+    },
+    "loads": {
+        "people_per_area": 0.08,
+        "activity_level_w": 120.0,
+        "lights_w_per_area": 8.0,
+        "equipment_w_per_area": 10.0,
+        "infiltration_ach": 0.5,
+        "ventilation_l_s_person": 2.5,
+        "ventilation_l_s_m2": 0.3,
+        "heating_setpoint_c": 20.0,
+        "cooling_setpoint_c": 26.0
+    },
+    "schedules": {
+        "occupancy_weekday": [[7, 0.1], [19, 1.0], [24, 0.2]],
+        "occupancy_other_days": 0.3
+    },
+    "constructions": {
+        "ext_wall_u": 0.45,
+        "roof_u": 0.25,
+        "window_u": 2.7,
+        "window_shgc": 0.6
+    },
+    "site": {
+        "terrain": "Suburbs",
+        "ground_temps_c": [18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0]
+    },
+    "hvac": {
+        "max_heating_supply_air_temp_c": 50.0,
+        "min_cooling_supply_air_temp_c": 13.0,
+        "max_heating_supply_humidity_ratio": 0.0156,
+        "min_cooling_supply_humidity_ratio": 0.0077
+    },
+    "simulation": {
+        "timestep": 4,
+        "run_period": [
+            1,
+            1,
+            12,
+            31
+        ],
+        "timeout_sec": 900
+    },
+    "pset_metadata": {
+        "space_quantities": "Qto_SpaceBaseQuantities",
+        "wall_common": "Pset_WallCommon",
+        "is_external": "IsExternal"
+    }
+}

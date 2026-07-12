@@ -1,0 +1,7 @@
+# BIM-to-BEM pipeline + web app
+# Recommended interpreter on this machine: conda env `venv_lmm`
+ifcopenshell>=0.8.0
+numpy>=1.26
+pandas>=2.0
+flask>=3.0
+tqdm>=4.60
