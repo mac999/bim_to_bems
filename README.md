@@ -8,12 +8,12 @@ Convert BIM models (IFC) into Building Energy Models, run **EnergyPlus** simulat
    <img src="./doc/img3.png" height="200"></img>
 </p>
 
-![architecture](doc/cd.svg)
-
 ```
  IFC / IDF ──▶  pipeline (CLI)  ──▶ EnergyPlus ──▶ results.json ──▶ 3D viewer
                convert · simulate · results · geometry           (Flask + Three.js)
 ```
+![architecture](doc/cd.svg)
+
 
 ## Features
 
