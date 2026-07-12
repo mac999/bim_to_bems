@@ -1,10 +1,12 @@
-# BIM → BEM Energy Analyzer
+# BIM to BEM Energy Analyzer
 
-Convert BIM models (IFC) into Building Energy Models, run **EnergyPlus** simulations,
-and explore per-zone results in an interactive **3D web viewer** with energy color
-mapping.
+Convert BIM models (IFC) into Building Energy Models, run **EnergyPlus** simulations, and explore per-zone results in an interactive **3D web viewer** with energy color mapping.
 
-*(한국어 버전: [README_KR.md](README_KR.md))*
+<p align="center">
+   <img src="./doc/img1.png" height="200"></img></br>
+   <img src="./doc/img2.png" height="200"></img></br>
+   <img src="./doc/img3.png" height="200"></img>
+</p>
 
 ![architecture](doc/cd.svg)
 
@@ -180,3 +182,9 @@ bim_to_bem/
 ├─ config.json          # pipeline defaults (loads, constructions, tolerances)
 └─ convert_ifc_to_ep.py # legacy prototype (superseded by pipeline/)
 ```
+
+# License
+MIT License
+
+# Author 
+Taewook Kang, Ph.D, laputa99999@gmail.com
