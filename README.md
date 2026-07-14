@@ -4,9 +4,9 @@ Convert BIM models (IFC) into Building Energy Models, run **EnergyPlus** simulat
 
 <p align="center">   
    <img src="./doc/demo1.gif" height="250"></img></br>   
-   <img src="./doc/img1.png" height="100"></img>
-   <img src="./doc/img2.png" height="100"></img></br>
-   <img src="./doc/img3.png" height="250"></img>
+   <img src="./doc/img1.png" height="120"></img>
+   <img src="./doc/img2.png" height="120"></img></br>
+   <img src="./doc/img3.png" height="260"></img>
 </p>
 
 ```
