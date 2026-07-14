@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BIM → BEM Energy Analyzer</title>
+<link rel="stylesheet" href="/static/style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<header>
+  <div class="brand">BIM <span class="arrow">→</span> BEM <span class="sub">Energy Analyzer · EnergyPlus</span></div>
+  <div class="header-actions">
+    <button id="reset-btn" class="ghost danger" hidden title="Delete this job's results and reset the viewer">reset results</button>
+    <div id="job-badge" class="badge idle">idle</div>
+  </div>
+</header>
+
+<div id="layout">
+  <aside id="sidebar">
+    <section class="panel">
+      <h2>1 · Input</h2>
+      <label class="file-row">IFC model <input type="file" id="file-ifc" accept=".ifc"></label>
+      <label class="file-row">IDF (optional) <input type="file" id="file-idf" accept=".idf"></label>
+      <label class="file-row">EPW (optional) <input type="file" id="file-epw" accept=".epw"></label>
+      <div class="hint">IFC only → auto-converted to IDF · IDF only → simulated directly · both → IDF drives the simulation.</div>
+      <h3>Demo datasets</h3>
+      <div id="demo-list" class="demo-list"></div>
+    </section>
+
+    <section class="panel">
+      <h2>2 · Simulation</h2>
+      <label>Weather file
+        <select id="weather-select"></select>
+      </label>
+      <label>Window mode
+        <select id="window-mode">
+          <option value="auto" selected>auto (IfcWindow → WWR fallback)</option>
+          <option value="wwr">WWR only</option>
+          <option value="none">no windows</option>
+        </select>
+      </label>
+      <label>Window-to-wall ratio <span id="wwr-value">0.30</span>
+        <input type="range" id="wwr" min="0" max="0.8" step="0.05" value="0.3">
+      </label>
+      <button id="run-btn" class="primary">Run analysis</button>
+      <div id="progress-wrap" hidden>
+        <div class="progress-track"><div id="progress-fill"></div></div>
+        <div class="progress-meta">
+          <span id="progress-stage">queued</span>
+          <span id="progress-eta"></span>
+        </div>
+        <ol id="stage-steps" class="stage-steps">
+          <li>Convert</li>
+          <li>Geometry</li>
+          <li>Simulate</li>
+          <li>Results</li>
+        </ol>
+      </div>
+      <pre id="log" class="log" hidden></pre>
+      <button id="log-toggle" class="ghost" hidden>show log</button>
+    </section>
+
+    <section class="panel" id="results-panel" hidden>
+      <h2>3 · Results</h2>
+      <div id="totals" class="totals"></div>
+      <div class="downloads">
+        <a id="dl-idf" target="_blank">IDF</a>
+        <a id="dl-results" target="_blank">results.json</a>
+        <a id="dl-report" target="_blank">E+ report</a>
+        <a id="dl-err" target="_blank">.err</a>
+      </div>
+      <div class="btn-row">
+        <button id="report-btn" class="ghost accent">generate report</button>
+        <button id="table-toggle" class="ghost">zone table</button>
+      </div>
+    </section>
+
+    <section class="panel" id="zone-panel" hidden>
+      <h2 id="zone-title">Zone</h2>
+      <div id="zone-info" class="totals"></div>
+      <div class="chart-wrap">
+        <h3>Monthly heating / cooling <span class="unit">kWh</span></h3>
+        <div class="chart-legend">
+          <span><i class="chip heat"></i>Heating</span>
+          <span><i class="chip cool"></i>Cooling</span>
+        </div>
+        <canvas id="zone-chart" width="300" height="150"></canvas>
+        <div id="chart-tip" class="tooltip" hidden></div>
+      </div>
+    </section>
+  </aside>
+
+  <div id="splitter" title="Drag to resize the sidebar"></div>
+
+  <main id="viewport">
+    <div id="viewer-controls">
+      <label>Metric
+        <select id="metric-select">
+          <option value="heating_kwh">Heating energy (kWh)</option>
+          <option value="cooling_kwh">Cooling energy (kWh)</option>
+          <option value="heating_kwh_m2">Heating (kWh/m²)</option>
+          <option value="cooling_kwh_m2">Cooling (kWh/m²)</option>
+          <option value="solar_gain_kwh">Solar gain, windows (kWh)</option>
+          <option value="sunlit_frac">Sunlit fraction · shading (0–1)</option>
+          <option value="temp_avg_c">Mean air temp (°C)</option>
+          <option value="operative_temp_c">Operative temp (°C)</option>
+          <option value="rh_pct">Relative humidity (%)</option>
+          <option value="temp_min_c">Min air temp (°C)</option>
+          <option value="temp_max_c">Max air temp (°C)</option>
+        </select>
+      </label>
+      <label>Period
+        <select id="period-select"><option value="annual">Annual</option></select>
+      </label>
+      <label>Colors
+        <select id="ramp-select">
+          <option value="sequential">Sequential (blue)</option>
+          <option value="diverging">Diverging (blue↔red)</option>
+          <option value="viridis">Viridis</option>
+        </select>
+      </label>
+      <label>Zone opacity <input type="range" id="opacity" min="0.15" max="1" step="0.05" value="0.92"></label>
+      <label class="check"><input type="checkbox" id="show-context" checked> context</label>
+      <label class="check"><input type="checkbox" id="show-edges" checked> edges</label>
+    </div>
+    <div id="legend">
+      <div id="legend-title"></div>
+      <div id="legend-bar"></div>
+      <div class="legend-labels"><span id="legend-min"></span><span id="legend-max"></span></div>
+    </div>
+    <div id="canvas-holder"></div>
+    <div id="empty-hint">Upload a model or pick a demo dataset, then press <b>Run analysis</b>.</div>
+    <div id="zone-table-wrap" hidden>
+      <div id="zt-splitter" title="Drag to resize the zone table"></div>
+      <div id="zt-scroll"><table id="zone-table"></table></div>
+    </div>
+  </main>
+</div>
+
+<script type="module" src="/static/app.js?v=5"></script>
+</body>
+</html>
