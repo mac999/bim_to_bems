@@ -45,7 +45,7 @@ Convert BIM models (IFC) into Building Energy Models, run **EnergyPlus** simulat
 pip install -r requirements.txt
 ```
 
-EnergyPlus is found automatically (config → `PATH` → common install roots such as
+[EnergyPlus](https://energyplus.net/downloads) is found automatically (config → `PATH` → common install roots such as
 `C:\EnergyPlusV*`, `F:\Program\EnergyPlus*`). To pin a specific install or weather
 file, edit `config.json`:
 
