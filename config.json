@@ -1,5 +1,5 @@
 {
-    "energyplus_dir": "",
+    "energyplus_dir": "D:/program/EnergyPlusV26-1-0",
     "weather_file": "",
     "idf_version": "25.2",
     "references": {
@@ -10,7 +10,11 @@
         "loads.ventilation_l_s_person / ventilation_l_s_m2": "ASHRAE 62.1-2022 Table 6-1 office: 2.5 L/s-person + 0.3 L/s-m2",
         "loads.infiltration_ach": "ASHRAE Handbook Fundamentals, typical mid-tightness envelope 0.5 ACH",
         "constructions.*": "ASHRAE 90.1-2019 climate zone 4-5 prescriptive U-values (approx.)",
-        "hvac.*": "EnergyPlus IdealLoadsAirSystem supply limits (ASHRAE-style dual setpoint control)"
+        "hvac.*": "EnergyPlus IdealLoadsAirSystem supply limits (ASHRAE-style dual setpoint control)",
+        "constructions.door_u": "ASHRAE 90.1-2019 Table A7 opaque swinging door U ~2.2 W/m2K",
+        "space_profiles.*": "ASHRAE 62.1-2022 Table 6-1 and 90.1-2019 Table 9.5.1 densities by space type",
+        "site.ground_coupling": "EnergyPlus AuxiliaryPrograms: undisturbed EPW ground temperatures must be damped towards the indoor temperature for Site:GroundTemperature:BuildingSurface",
+        "efficiency.*": "seasonal heat source efficiency / cooling COP used to estimate delivered energy from the ideal load"
     },
     "conversion": {
         "window_mode": "auto",
@@ -35,18 +39,48 @@
         "cooling_setpoint_c": 26.0
     },
     "schedules": {
-        "occupancy_weekday": [[7, 0.1], [19, 1.0], [24, 0.2]],
+        "occupancy_weekday": [
+            [
+                7,
+                0.1
+            ],
+            [
+                19,
+                1.0
+            ],
+            [
+                24,
+                0.2
+            ]
+        ],
         "occupancy_other_days": 0.3
     },
     "constructions": {
         "ext_wall_u": 0.45,
         "roof_u": 0.25,
         "window_u": 2.7,
-        "window_shgc": 0.6
+        "window_shgc": 0.6,
+        "door_u": 2.2
     },
     "site": {
         "terrain": "Suburbs",
-        "ground_temps_c": [18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0]
+        "ground_temps_c": [
+            18.0,
+            18.0,
+            18.0,
+            18.0,
+            18.0,
+            18.0,
+            18.0,
+            18.0,
+            18.0,
+            18.0,
+            18.0,
+            18.0
+        ],
+        "ground_temps_from_epw": true,
+        "ground_temps_depth_m": 2.0,
+        "ground_coupling": 0.5
     },
     "hvac": {
         "max_heating_supply_air_temp_c": 50.0,
@@ -68,5 +102,90 @@
         "space_quantities": "Qto_SpaceBaseQuantities",
         "wall_common": "Pset_WallCommon",
         "is_external": "IsExternal"
+    },
+    "space_profiles": {
+        "corridor": {
+            "keywords": [
+                "corridor",
+                "hall",
+                "lobby",
+                "stair",
+                "elevator",
+                "circulation"
+            ],
+            "people_per_area": 0.02,
+            "lights_w_per_area": 5.0,
+            "equipment_w_per_area": 1.0
+        },
+        "toilet": {
+            "keywords": [
+                "toilet",
+                "wc",
+                "restroom",
+                "bath",
+                "shower",
+                "sanitary"
+            ],
+            "people_per_area": 0.02,
+            "lights_w_per_area": 6.0,
+            "equipment_w_per_area": 1.0
+        },
+        "storage": {
+            "keywords": [
+                "storage",
+                "store",
+                "closet",
+                "utility",
+                "plant",
+                "mech",
+                "electrical",
+                "garage",
+                "attic"
+            ],
+            "people_per_area": 0.005,
+            "lights_w_per_area": 4.0,
+            "equipment_w_per_area": 1.0,
+            "ventilation_l_s_person": 0.0
+        },
+        "meeting": {
+            "keywords": [
+                "meeting",
+                "conference",
+                "seminar",
+                "classroom",
+                "lecture"
+            ],
+            "people_per_area": 0.35,
+            "lights_w_per_area": 9.0,
+            "equipment_w_per_area": 5.0
+        },
+        "kitchen": {
+            "keywords": [
+                "kitchen",
+                "pantry",
+                "canteen",
+                "dining"
+            ],
+            "people_per_area": 0.1,
+            "lights_w_per_area": 9.0,
+            "equipment_w_per_area": 30.0
+        },
+        "bedroom": {
+            "keywords": [
+                "bedroom",
+                "bed room",
+                "living",
+                "dwelling",
+                "apartment"
+            ],
+            "people_per_area": 0.03,
+            "lights_w_per_area": 5.0,
+            "equipment_w_per_area": 4.0
+        }
+    },
+    "efficiency": {
+        "heating_efficiency": 0.85,
+        "cooling_cop": 3.0,
+        "distribution_efficiency": 0.9
     }
 }

@@ -11,8 +11,11 @@ const state = {
 const viewer = new Viewer($('canvas-holder'), onZonePicked);
 
 const METRIC_LABELS = {
-  heating_kwh: 'Heating energy (kWh)', cooling_kwh: 'Cooling energy (kWh)',
-  heating_kwh_m2: 'Heating (kWh/m²)', cooling_kwh_m2: 'Cooling (kWh/m²)',
+  heating_kwh: 'Heating load (kWh)', cooling_kwh: 'Cooling load (kWh)',
+  heating_kwh_m2: 'Heating load (kWh/m²)', cooling_kwh_m2: 'Cooling load (kWh/m²)',
+  heating_energy_kwh: 'Heating energy, est. (kWh)',
+  cooling_energy_kwh: 'Cooling energy, est. (kWh)',
+  energy_kwh_m2: 'Energy use, est. (kWh/m²)',
   solar_gain_kwh: 'Solar gain, windows (kWh)',
   sunlit_frac: 'Sunlit fraction · shading',
   temp_avg_c: 'Mean air temp (°C)', operative_temp_c: 'Operative temp (°C)',
@@ -21,6 +24,7 @@ const METRIC_LABELS = {
 };
 const MONTHLY_KEY = {
   heating_kwh: 'heating_kwh', cooling_kwh: 'cooling_kwh', temp_avg_c: 'temp_c',
+  heating_energy_kwh: 'heating_energy_kwh', cooling_energy_kwh: 'cooling_energy_kwh',
   solar_gain_kwh: 'solar_gain_kwh', sunlit_frac: 'sunlit_frac',
   operative_temp_c: 'operative_temp_c', rh_pct: 'rh_pct',
 };
@@ -148,6 +152,7 @@ async function loadJobArtifacts(jobId, job) {
   buildPeriodOptions();
   applyColors();
   showTotals(job.totals || results.totals);
+  showQuality(results.quality);
   for (const [k, art] of [['dl-idf', 'idf'], ['dl-results', 'results'],
                           ['dl-report', 'report'], ['dl-err', 'err']]) {
     $(k).href = `/api/jobs/${jobId}/${art}`;
@@ -163,10 +168,43 @@ function showTotals(t) {
   $('totals').innerHTML =
     kv('Zones', t.zone_count, '') +
     kv('Floor area', t.floor_area_m2?.toLocaleString(), 'm²') +
-    kv('Heating', Math.round(t.heating_kwh).toLocaleString(), 'kWh/yr') +
-    kv('Cooling', Math.round(t.cooling_kwh).toLocaleString(), 'kWh/yr') +
+    kv('Heating load', Math.round(t.heating_kwh).toLocaleString(), 'kWh/yr') +
+    kv('Cooling load', Math.round(t.cooling_kwh).toLocaleString(), 'kWh/yr') +
     (t.heating_kwh_m2 !== undefined ? kv('Heating EUI', t.heating_kwh_m2, 'kWh/m²') : '') +
-    (t.cooling_kwh_m2 !== undefined ? kv('Cooling EUI', t.cooling_kwh_m2, 'kWh/m²') : '');
+    (t.cooling_kwh_m2 !== undefined ? kv('Cooling EUI', t.cooling_kwh_m2, 'kWh/m²') : '') +
+    (t.lights_kwh ? kv('Lighting', Math.round(t.lights_kwh).toLocaleString(), 'kWh/yr') : '') +
+    (t.equipment_kwh ? kv('Equipment', Math.round(t.equipment_kwh).toLocaleString(), 'kWh/yr') : '') +
+    (t.energy_kwh !== undefined
+      ? kv('Energy use (est.)', Math.round(t.energy_kwh).toLocaleString(), 'kWh/yr') : '') +
+    (t.energy_kwh_m2 !== undefined ? kv('Energy EUI (est.)', t.energy_kwh_m2, 'kWh/m²') : '');
+  const eff = t.efficiency;
+  $('totals').title = eff
+    ? `Estimated energy use = load / (efficiency x distribution): heating ${eff.heating_efficiency}, `
+      + `cooling COP ${eff.cooling_cop}, distribution ${eff.distribution_efficiency}`
+    : '';
+}
+
+// Conversion quality: what would make these numbers unreliable.
+function showQuality(q) {
+  const box = $('quality');
+  if (!q) { box.hidden = true; return; }
+  const chips = [];
+  const chip = (warn, text) => chips.push(`<span class="${warn ? 'warn' : 'ok'}">${text}</span>`);
+  const source = { IfcSpace: 'zones from IfcSpace', IfcBuildingStorey: 'zones from storey boxes',
+                   Building: 'single box zone', IDF: 'zones from the IDF' }[q.zone_source]
+                 || q.zone_source;
+  chip(q.zone_source !== 'IfcSpace' && q.zone_source !== 'IDF', source);
+  if (q.adiabatic_pct) chip(q.adiabatic_pct > 10, `${q.adiabatic_pct}% adiabatic surfaces`);
+  const ep = q.energyplus || {};
+  if (ep.zones_not_enclosed) chip(true, `${ep.zones_not_enclosed} zones not enclosed`);
+  if (q.area_check) {
+    const dev = q.area_check.total_deviation_pct;
+    chip(Math.abs(dev) > 10, `floor area ${dev > 0 ? '+' : ''}${dev}% vs IFC`);
+  }
+  if (ep.severe) chip(true, `${ep.severe} severe E+ messages`);
+  if (q.window_count !== undefined) chip(false, `${q.window_count} windows · ${q.door_count} doors`);
+  box.innerHTML = chips.join('');
+  box.hidden = chips.length === 0;
 }
 
 // ---------------------------------------------------------------- coloring
@@ -224,8 +262,11 @@ function onZonePicked(zoneName) {
   $('zone-info').innerHTML =
     kv('Floor area', z?.area_m2 ?? gz?.area_m2, 'm²') +
     kv('Volume', z?.volume_m3 ?? gz?.volume_m3, 'm³') +
-    kv('Heating', z ? Math.round(z.heating_kwh).toLocaleString() : '–', 'kWh/yr') +
-    kv('Cooling', z ? Math.round(z.cooling_kwh).toLocaleString() : '–', 'kWh/yr') +
+    kv('Heating load', z ? Math.round(z.heating_kwh).toLocaleString() : '–', 'kWh/yr') +
+    kv('Cooling load', z ? Math.round(z.cooling_kwh).toLocaleString() : '–', 'kWh/yr') +
+    (z?.energy_kwh !== undefined
+      ? kv('Energy use (est.)', Math.round(z.energy_kwh).toLocaleString(), 'kWh/yr') : '') +
+    (z?.profile ? kv('Space profile', z.profile, '') : '') +
     kv('Solar gain', z?.solar_gain_kwh !== undefined
       ? Math.round(z.solar_gain_kwh).toLocaleString() : '–', 'kWh/yr') +
     kv('Sunlit', z?.sunlit_frac !== undefined

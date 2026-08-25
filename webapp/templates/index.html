@@ -71,6 +71,7 @@
     <section class="panel" id="results-panel" hidden>
       <h2>3 · Results</h2>
       <div id="totals" class="totals"></div>
+      <div id="quality" class="quality" hidden></div>
       <div class="downloads">
         <a id="dl-idf" target="_blank">IDF</a>
         <a id="dl-results" target="_blank">results.json</a>
@@ -104,10 +105,13 @@
     <div id="viewer-controls">
       <label>Metric
         <select id="metric-select">
-          <option value="heating_kwh">Heating energy (kWh)</option>
-          <option value="cooling_kwh">Cooling energy (kWh)</option>
-          <option value="heating_kwh_m2">Heating (kWh/m²)</option>
-          <option value="cooling_kwh_m2">Cooling (kWh/m²)</option>
+          <option value="heating_kwh">Heating load (kWh)</option>
+          <option value="cooling_kwh">Cooling load (kWh)</option>
+          <option value="heating_kwh_m2">Heating load (kWh/m²)</option>
+          <option value="cooling_kwh_m2">Cooling load (kWh/m²)</option>
+          <option value="heating_energy_kwh">Heating energy, est. (kWh)</option>
+          <option value="cooling_energy_kwh">Cooling energy, est. (kWh)</option>
+          <option value="energy_kwh_m2">Energy use, est. (kWh/m²)</option>
           <option value="solar_gain_kwh">Solar gain, windows (kWh)</option>
           <option value="sunlit_frac">Sunlit fraction · shading (0–1)</option>
           <option value="temp_avg_c">Mean air temp (°C)</option>

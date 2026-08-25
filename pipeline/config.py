@@ -48,10 +48,55 @@ DEFAULT_CONFIG: dict = {
         "roof_u": 0.25,
         "window_u": 2.7,
         "window_shgc": 0.6,
+        "door_u": 2.2,
+    },
+    # per-space overrides of "loads", chosen by keyword in the space name /
+    # IfcSpace.LongName; the first profile whose keyword matches wins
+    "space_profiles": {
+        "corridor": {
+            "keywords": ["corridor", "hall", "lobby", "stair", "elevator", "circulation"],
+            "people_per_area": 0.02, "lights_w_per_area": 5.0,
+            "equipment_w_per_area": 1.0,
+        },
+        "toilet": {
+            "keywords": ["toilet", "wc", "restroom", "bath", "shower", "sanitary"],
+            "people_per_area": 0.02, "lights_w_per_area": 6.0,
+            "equipment_w_per_area": 1.0,
+        },
+        "storage": {
+            "keywords": ["storage", "store", "closet", "utility", "plant", "mech",
+                         "electrical", "garage", "attic"],
+            "people_per_area": 0.005, "lights_w_per_area": 4.0,
+            "equipment_w_per_area": 1.0, "ventilation_l_s_person": 0.0,
+        },
+        "meeting": {
+            "keywords": ["meeting", "conference", "seminar", "classroom", "lecture"],
+            "people_per_area": 0.35, "lights_w_per_area": 9.0,
+            "equipment_w_per_area": 5.0,
+        },
+        "kitchen": {
+            "keywords": ["kitchen", "pantry", "canteen", "dining"],
+            "people_per_area": 0.1, "lights_w_per_area": 9.0,
+            "equipment_w_per_area": 30.0,
+        },
+        "bedroom": {
+            "keywords": ["bedroom", "bed room", "living", "dwelling", "apartment"],
+            "people_per_area": 0.03, "lights_w_per_area": 5.0,
+            "equipment_w_per_area": 4.0,
+        },
+    },
+    # ideal thermal load -> estimated delivered energy (results.json only)
+    "efficiency": {
+        "heating_efficiency": 0.85,   # seasonal efficiency of the heat source
+        "cooling_cop": 3.0,           # seasonal COP of the cooling plant
+        "distribution_efficiency": 0.9,  # fans, pumps, duct and pipe losses
     },
     "site": {
         "terrain": "Suburbs",   # Country|Suburbs|City|Ocean|Urban
         "ground_temps_c": [18.0] * 12,
+        "ground_temps_from_epw": True,  # replace the list with EPW header values
+        "ground_temps_depth_m": 2.0,    # depth set to take from the EPW header
+        "ground_coupling": 0.5,         # 0: indoor temperature, 1: raw EPW profile
     },
     "hvac": {
         "max_heating_supply_air_temp_c": 50.0,
@@ -153,3 +198,80 @@ def list_weather_files(config: dict | None = None) -> list[str]:
             seen.add(key)
             out.append(f)
     return out
+
+
+def ground_temperatures_from_epw(epw_path: str, depth_m: float = 2.0) -> list[float] | None:
+    """Monthly ground temperatures from the EPW ``GROUND TEMPERATURES`` header.
+
+    The header holds one set per depth: depth, conductivity, density, specific
+    heat, then 12 monthly values. The set closest to ``depth_m`` is returned.
+    """
+    try:
+        with open(epw_path, "r", encoding="utf-8", errors="replace") as f:
+            for _ in range(12):
+                line = f.readline()
+                if not line:
+                    break
+                if not line.upper().startswith("GROUND TEMPERATURES"):
+                    continue
+                parts = [p.strip() for p in line.rstrip("\r\n").split(",")]
+                sets = []
+                i = 2
+                while len(parts) - i >= 16:
+                    try:
+                        depth = float(parts[i])
+                        temps = [float(v) for v in parts[i + 4:i + 16]]
+                    except ValueError:
+                        break
+                    sets.append((depth, temps))
+                    i += 16
+                if sets:
+                    return min(sets, key=lambda s: abs(s[0] - depth_m))[1]
+    except OSError:
+        return None
+    return None
+
+
+def apply_epw_site_data(config: dict, epw_path: str | None) -> str:
+    """Fill ``site.ground_temps_c`` from the weather file. Returns a log note.
+
+    The undisturbed EPW profile must not be used as-is for
+    ``Site:GroundTemperature:BuildingSurface`` (it ignores the heat the building
+    itself puts into the ground), so it is blended towards the heating setpoint
+    with ``site.ground_coupling``: 0 keeps the indoor temperature, 1 the raw
+    weather-file values.
+    """
+    site = config.setdefault("site", {})
+    if not epw_path or not site.get("ground_temps_from_epw", True):
+        return ""
+    depth = float(site.get("ground_temps_depth_m", 2.0))
+    temps = ground_temperatures_from_epw(epw_path, depth)
+    if not temps:
+        return ""
+    coupling = float(site.get("ground_coupling", 0.5))
+    indoor = float((config.get("loads") or {}).get("heating_setpoint_c", 20.0))
+    site["ground_temps_c"] = [
+        round(indoor + coupling * (t - indoor), 2) for t in temps
+    ]
+    return (f"ground temperatures from {os.path.basename(epw_path)} "
+            f"({depth:g} m depth, coupling {coupling:g})")
+
+
+def match_space_profile(config: dict, *labels: str) -> str:
+    """Name of the first space profile whose keywords occur in the labels."""
+    text = " ".join(str(l).lower() for l in labels if l)
+    if not text:
+        return ""
+    for name, profile in (config.get("space_profiles") or {}).items():
+        for keyword in profile.get("keywords", []):
+            if str(keyword).lower() in text:
+                return name
+    return ""
+
+
+def zone_loads(config: dict, profile: str) -> dict:
+    """Base loads with the named space profile applied on top."""
+    loads = dict(config.get("loads") or {})
+    overrides = (config.get("space_profiles") or {}).get(profile) or {}
+    loads.update({k: v for k, v in overrides.items() if k != "keywords"})
+    return loads

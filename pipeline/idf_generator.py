@@ -1,8 +1,9 @@
 """BuildingModel -> EnergyPlus IDF writer.
 
 World coordinates are used throughout (GlobalGeometryRules ... World), so zone
-origins stay at 0,0,0 and surface vertices are written as-is. Every zone gets
-default internal loads, infiltration, a dual-setpoint thermostat and an
+origins stay at 0,0,0 and surface vertices are written as-is; the building
+north axis carries the orientation instead. Every zone gets internal loads from
+its space profile, infiltration, a dual-setpoint thermostat and an
 IdealLoadsAirSystem so heating/cooling demand can be compared across zones
 without modelling a real HVAC plant.
 """
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from .config import zone_loads
 from .model import (
     BuildingModel, CEILING, FLOOR, GROUND, OUTDOORS, ROOF, SURFACE, Surface,
 )
@@ -73,8 +75,8 @@ def _surface_block(idf: list[str], s: Surface) -> None:
     for w in s.windows:
         idf.append("FenestrationSurface:Detailed,")
         idf.append(f"  {w.name},")
-        idf.append("  Window,")
-        idf.append("  BEM_Window,")
+        idf.append(f"  {w.subsurface_type},")
+        idf.append(f"  {'BEM_Door' if w.subsurface_type == 'Door' else 'BEM_Window'},")
         idf.append(f"  {s.name},")
         idf.append("  ,")  # outside boundary condition object
         idf.append("  autocalculate,")  # view factor to ground
@@ -132,6 +134,9 @@ def generate_idf(model: BuildingModel, cfg: dict) -> str:
          _fmt(r_extra(cons["roof_u"], 0.15 / 1.63)), 0.9, 0.7, 0.7)
     _obj(idf, "WindowMaterial:SimpleGlazingSystem", "BEM_Glazing",
          _fmt(cons["window_u"]), _fmt(cons["window_shgc"]), 0.7)
+    _obj(idf, "Material:NoMass", "BEM_Door_Layer", "Smooth",
+         _fmt(max(0.01, 1.0 / max(0.05, cons.get("door_u", 2.2)) - 0.17)),
+         0.9, 0.7, 0.7)
 
     _obj(idf, "Construction", "BEM_Ext_Wall", "BEM_Ins_Wall", "BEM_Concrete_200")
     _obj(idf, "Construction", "BEM_Int_Wall", "BEM_Gypsum_25")
@@ -140,6 +145,7 @@ def generate_idf(model: BuildingModel, cfg: dict) -> str:
     _obj(idf, "Construction", "BEM_Int_Floor", "BEM_Concrete_150")
     _obj(idf, "Construction", "BEM_Roof", "BEM_Ins_Roof", "BEM_Concrete_150")
     _obj(idf, "Construction", "BEM_Window", "BEM_Glazing")
+    _obj(idf, "Construction", "BEM_Door", "BEM_Door_Layer")
 
     # --- schedules -----------------------------------------------------------
     _obj(idf, "ScheduleTypeLimits", "BEM_Fraction", 0.0, 1.0, "Continuous")
@@ -173,18 +179,20 @@ def generate_idf(model: BuildingModel, cfg: dict) -> str:
             _surface_block(idf, s)
 
     for z in model.zones:
+        zl = zone_loads(cfg, z.profile)
+        comment = f"space profile: {z.profile}" if z.profile else ""
         _obj(idf, "People", f"{z.name}_People", z.name, "BEM_Occupancy",
-             "People/Area", "", _fmt(loads["people_per_area"]), "", 0.3, "",
-             "BEM_Activity")
+             "People/Area", "", _fmt(zl["people_per_area"]), "", 0.3, "",
+             "BEM_Activity", comment=comment)
         _obj(idf, "Lights", f"{z.name}_Lights", z.name, "BEM_Occupancy",
-             "Watts/Area", "", _fmt(loads["lights_w_per_area"]), "", 0.2, 0.4,
+             "Watts/Area", "", _fmt(zl["lights_w_per_area"]), "", 0.2, 0.4,
              0.2, 1.0)
         _obj(idf, "ElectricEquipment", f"{z.name}_Equip", z.name,
-             "BEM_Occupancy", "Watts/Area", "", _fmt(loads["equipment_w_per_area"]),
+             "BEM_Occupancy", "Watts/Area", "", _fmt(zl["equipment_w_per_area"]),
              "", 0.1, 0.3, 0.0)
         _obj(idf, "ZoneInfiltration:DesignFlowRate", f"{z.name}_Infiltration",
              z.name, "BEM_Always_On", "AirChanges/Hour", "", "", "",
-             _fmt(loads["infiltration_ach"]), 1, 0, 0, 0)
+             _fmt(zl["infiltration_ach"]), 1, 0, 0, 0)
         _obj(idf, "ZoneControl:Thermostat", f"{z.name}_Thermostat", z.name,
              "BEM_Ctrl_DualSetpoint", "ThermostatSetpoint:DualSetpoint",
              f"{z.name}_DualSetpoint")
@@ -199,8 +207,8 @@ def generate_idf(model: BuildingModel, cfg: dict) -> str:
              f"{z.name}{IDEAL_LOADS_SUFFIX}", 1, 1)
         # ASHRAE 62.1 outdoor air (L/s -> m3/s), served by the ideal loads system
         _obj(idf, "DesignSpecification:OutdoorAir", f"{z.name}_OA", "Sum",
-             _fmt(loads.get("ventilation_l_s_person", 0.0) / 1000.0),
-             _fmt(loads.get("ventilation_l_s_m2", 0.0) / 1000.0), 0, 0)
+             _fmt(zl.get("ventilation_l_s_person", 0.0) / 1000.0),
+             _fmt(zl.get("ventilation_l_s_m2", 0.0) / 1000.0), 0, 0)
         _obj(idf, "ZoneHVAC:IdealLoadsAirSystem", f"{z.name}{IDEAL_LOADS_SUFFIX}",
              "", f"{z.name}_Supply_Inlet", "", "",
              _fmt(hvac.get("max_heating_supply_air_temp_c", 50.0)),
@@ -215,6 +223,9 @@ def generate_idf(model: BuildingModel, cfg: dict) -> str:
          "Zone Ideal Loads Supply Air Total Heating Energy", "Monthly")
     _obj(idf, "Output:Variable", "*",
          "Zone Ideal Loads Supply Air Total Cooling Energy", "Monthly")
+    _obj(idf, "Output:Variable", "*", "Zone Lights Electricity Energy", "Monthly")
+    _obj(idf, "Output:Variable", "*",
+         "Zone Electric Equipment Electricity Energy", "Monthly")
     _obj(idf, "Output:Variable", "*", "Zone Mean Air Temperature", "Monthly")
     _obj(idf, "Output:Variable", "*", "Zone Operative Temperature", "Monthly")
     _obj(idf, "Output:Variable", "*", "Zone Air Relative Humidity", "Monthly")

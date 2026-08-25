@@ -18,15 +18,20 @@ Algorithm overview (improvements over naive pset-based conversion):
    become ``Ground``; everything else is ``Outdoors``. Unmatched upward-facing
    surfaces are re-typed as ``Roof``.
 
-4. Windows. Each ``IfcWindow`` mesh is projected onto the best matching
-   external wall and inscribed as a rectangle (shrunk iteratively until fully
-   inside the host polygon). If a model carries no usable windows, a
-   window-to-wall-ratio fallback inscribes centered glazing on external walls.
+4. Openings. Each ``IfcWindow``, ``IfcCurtainWall`` and ``IfcDoor`` mesh is
+   projected onto the best matching external wall and inscribed as a rectangle
+   (shrunk iteratively until fully inside the host polygon). If a model carries
+   no usable windows, a window-to-wall-ratio fallback inscribes centered
+   glazing on external walls.
 
 5. No-space fallback. Models without ``IfcSpace`` (common in as-built or
    structural exports) get one box zone per ``IfcBuildingStorey`` from the
    bounding box of that storey's elements - a standard "shoebox" BEM
    simplification - so the energy pipeline still runs end to end.
+
+6. Orientation and space use. The context ``TrueNorth`` sets the EnergyPlus
+   building north axis, and the space name / ``LongName`` selects the internal
+   load profile from ``config.space_profiles``.
 """
 from __future__ import annotations
 
@@ -41,6 +46,7 @@ import ifcopenshell.geom
 import ifcopenshell.util.element
 import ifcopenshell.util.unit
 
+from .config import match_space_profile
 from .model import (
     ADIABATIC, CEILING, FLOOR, GROUND, OUTDOORS, ROOF, SURFACE, WALL,
     BuildingModel, ContextElement, NameRegistry, Surface, WindowSurface, Zone,
@@ -355,14 +361,36 @@ def _rect_2d(min_x, min_y, max_x, max_y) -> np.ndarray:
     ], dtype=float)
 
 
-def _place_ifc_windows(model: BuildingModel, meshes: dict, reg: NameRegistry, cfg: dict) -> int:
+def _true_north_deg(ifc_file) -> float:
+    """EnergyPlus Building north axis: model +Y measured clockwise from true north.
+
+    ``TrueNorth`` gives the direction of true north in model coordinates; the
+    Building object wants the inverse rotation.
+    """
+    for ctx in ifc_file.by_type("IfcGeometricRepresentationContext"):
+        if ctx.is_a("IfcGeometricRepresentationSubContext"):
+            continue
+        ratios = list(getattr(getattr(ctx, "TrueNorth", None), "DirectionRatios", None) or [])
+        if len(ratios) >= 2 and (abs(ratios[0]) > 1e-9 or abs(ratios[1]) > 1e-9):
+            deg = round(-math.degrees(math.atan2(float(ratios[0]), float(ratios[1]))), 3)
+            return deg % 360.0
+    return 0.0
+
+
+def _place_ifc_subsurfaces(model: BuildingModel, meshes: dict, reg: NameRegistry,
+                           cfg: dict) -> tuple[int, int]:
+    """Project IfcWindow / IfcCurtainWall / IfcDoor meshes onto external walls."""
     ext_walls = [
         s for z in model.zones for s in z.surfaces
         if s.surface_type == WALL and s.boundary == OUTDOORS
     ]
-    placed = 0
+    placed = doors = 0
     for guid, (ifc_type, name, verts, _faces) in meshes.items():
-        if not ifc_type.startswith(("IfcWindow", "IfcCurtainWall")):
+        if ifc_type.startswith("IfcDoor"):
+            kind = "Door"
+        elif ifc_type.startswith(("IfcWindow", "IfcCurtainWall")):
+            kind = "Window"
+        else:
             continue
         center = verts.mean(axis=0)
         best: tuple[float, Surface] | None = None
@@ -396,10 +424,16 @@ def _place_ifc_windows(model: BuildingModel, meshes: dict, reg: NameRegistry, cf
         # match host winding so EnergyPlus accepts the subsurface
         if newell_normal(verts3d) @ n < 0:
             verts3d = verts3d[::-1]
-        win = WindowSurface(reg.unique(f"{host.name}_Win_{name or guid[:6]}"), verts3d, host)
-        host.windows.append(win)
-        placed += 1
-    return placed
+        tag = "Door" if kind == "Door" else "Win"
+        host.windows.append(WindowSurface(
+            reg.unique(f"{host.name}_{tag}_{name or guid[:6]}"), verts3d, host,
+            subsurface_type=kind,
+        ))
+        if kind == "Door":
+            doors += 1
+        else:
+            placed += 1
+    return placed, doors
 
 
 def _place_wwr_windows(model: BuildingModel, reg: NameRegistry, cfg: dict) -> int:
@@ -437,10 +471,38 @@ def _place_wwr_windows(model: BuildingModel, reg: NameRegistry, cfg: dict) -> in
 # zone construction
 # ---------------------------------------------------------------------------
 
+_AREA_KEYS = ("NetFloorArea", "GrossFloorArea", "Area", "GSA BIM Area")
+
+
+def _space_quantity_area(space, cfg: dict) -> float:
+    """Floor area as stated by the authoring tool, for cross-checking geometry.
+
+    The standard quantity set comes first; exporters that skip it usually still
+    write the area into some other set (Revit dimensions, GSA areas).
+    """
+    try:
+        psets = ifcopenshell.util.element.get_psets(space)
+    except Exception:
+        return 0.0
+    qto_name = (cfg.get("pset_metadata") or {}).get(
+        "space_quantities", "Qto_SpaceBaseQuantities")
+    ordered = [psets[qto_name]] if qto_name in psets else []
+    ordered += [v for k, v in psets.items() if k != qto_name]
+    for values in ordered:
+        for key in _AREA_KEYS:
+            value = values.get(key)
+            if isinstance(value, (int, float)) and value > 0:
+                return float(value)
+    return 0.0
+
+
 def _zone_from_space_mesh(space, verts, faces, reg: NameRegistry, cfg: dict) -> Zone | None:
     label = space.Name or space.LongName or f"Space_{space.GlobalId[:8]}"
     zone = Zone(name=reg.unique(label, "Zone"), ifc_guid=space.GlobalId,
-                long_name=space.LongName or "")
+                long_name=space.LongName or "",
+                profile=match_space_profile(cfg, space.LongName, space.Name,
+                                            getattr(space, "ObjectType", "")),
+                ifc_area=_space_quantity_area(space, cfg))
     container = None
     try:
         container = ifcopenshell.util.element.get_container(
@@ -548,6 +610,7 @@ def _fallback_storey_zones(ifc_file, meshes: dict, reg: NameRegistry,
     if not levels:
         zone = _box_zone(reg.unique(model.name or "Building_Zone"), "", gmin, gmax, reg)
         model.notes.append("No IfcSpace/IfcBuildingStorey: single bounding-box zone used.")
+        model.zone_source = "Building"
         return [zone]
 
     for idx, (elev, st) in enumerate(levels):
@@ -587,7 +650,10 @@ def parse_ifc(ifc_path: str, cfg: dict, verbose: bool = True) -> BuildingModel:
     model = BuildingModel(
         name=sanitized_building_name(building_name),
         source_file=os.path.basename(ifc_path),
+        north_axis_deg=_true_north_deg(ifc_file),
     )
+    if model.north_axis_deg:
+        model.notes.append(f"True north from IFC: {model.north_axis_deg} deg.")
 
     if verbose:
         print(f"[ifc] meshing products from {os.path.basename(ifc_path)} ...")
@@ -617,6 +683,7 @@ def parse_ifc(ifc_path: str, cfg: dict, verbose: bool = True) -> BuildingModel:
             model.notes.append(f"Space {space.GlobalId}: surface extraction failed; skipped.")
 
     if not model.zones:
+        model.zone_source = "IfcBuildingStorey"
         model.zones = _fallback_storey_zones(ifc_file, meshes, reg, model, cfg)
     if not model.zones:
         raise RuntimeError("No thermal zones could be derived from the IFC model.")
@@ -624,11 +691,12 @@ def parse_ifc(ifc_path: str, cfg: dict, verbose: bool = True) -> BuildingModel:
     _resolve_boundaries(model, cfg)
 
     mode = cfg["conversion"].get("window_mode", "auto")
-    n_win = 0
+    n_win = n_door = 0
     if mode == "auto":
-        n_win = _place_ifc_windows(model, meshes, reg, cfg)
-        if n_win and verbose:
-            print(f"[ifc] {n_win} IfcWindow(s) projected onto external walls")
+        n_win, n_door = _place_ifc_subsurfaces(model, meshes, reg, cfg)
+        if (n_win or n_door) and verbose:
+            print(f"[ifc] {n_win} window(s) and {n_door} door(s) "
+                  f"projected onto external walls")
     if mode != "none" and n_win == 0:  # auto found nothing usable, or mode == "wwr"
         n_win = _place_wwr_windows(model, reg, cfg)
         if n_win:
@@ -637,7 +705,7 @@ def parse_ifc(ifc_path: str, cfg: dict, verbose: bool = True) -> BuildingModel:
     if verbose:
         n_surf = sum(len(z.surfaces) for z in model.zones)
         print(f"[ifc] model: {len(model.zones)} zones, {n_surf} surfaces, "
-              f"{n_win} windows, {len(model.context)} context elements")
+              f"{n_win} windows, {n_door} doors, {len(model.context)} context elements")
         for note in model.notes:
             print(f"[ifc][note] {note}")
     return model

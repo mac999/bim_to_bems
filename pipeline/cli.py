@@ -23,8 +23,8 @@ import sys
 import traceback
 from pathlib import Path
 
-from .config import (PROJECT_ROOT, find_weather_file, list_weather_files,
-                     load_config)
+from .config import (PROJECT_ROOT, apply_epw_site_data, find_weather_file,
+                     list_weather_files, load_config)
 
 
 def _stage(name: str) -> None:
@@ -34,9 +34,33 @@ def _stage(name: str) -> None:
 def _zones_meta(model) -> list[dict]:
     return [
         {"name": z.name, "ifc_guid": z.ifc_guid, "storey": z.storey,
+         "profile": z.profile,
          "floor_area": round(z.floor_area, 3), "volume": round(z.volume, 3)}
         for z in model.zones
     ]
+
+
+def _quality(model, summary: dict, zones_meta: list[dict] | None) -> dict:
+    """Conversion + simulation quality figures stored alongside the results."""
+    from .model import quality_report
+
+    if model is not None:
+        report = quality_report(model)
+    else:
+        report = {"zone_source": "IDF", "zone_count": len(zones_meta or []),
+                  "notes": []}
+    report["energyplus"] = {
+        k: summary[k] for k in
+        ("warnings", "severe", "zones_not_enclosed", "coincident_vertices",
+         "volume_mismatch") if k in summary
+    }
+    return report
+
+
+def _site_from_weather(cfg: dict, weather: str | None) -> None:
+    note = apply_epw_site_data(cfg, weather or find_weather_file(cfg))
+    if note:
+        print(f"[site] {note}")
 
 
 def _write_json(path: Path, data) -> None:
@@ -60,6 +84,7 @@ def cmd_convert(args) -> int:
         cfg["conversion"]["window_mode"] = args.window_mode
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
+    _site_from_weather(cfg, getattr(args, "weather", None))
 
     _stage("convert")
     model = parse_ifc(args.input, cfg)
@@ -103,12 +128,13 @@ def cmd_simulate(args) -> int:
 def cmd_results(args) -> int:
     from .results_parser import write_results
 
+    cfg = load_config(args.config)
     _stage("results")
     zones_meta = None
     if args.model and Path(args.model).exists():
         with open(args.model, "r", encoding="utf-8") as f:
             zones_meta = json.load(f).get("zones")
-    results = write_results(args.dir, args.output, zones_meta)
+    results = write_results(args.dir, args.output, zones_meta, cfg)
     t = results["totals"]
     print(f"[results] {t['zone_count']} zones | heating {t['heating_kwh']} kWh "
           f"| cooling {t['cooling_kwh']} kWh -> {args.output}")
@@ -137,6 +163,7 @@ def cmd_run(args) -> int:
     if not ifc_path and not idf_path:
         print("[error] provide an .ifc and/or .idf input", file=sys.stderr)
         return 2
+    _site_from_weather(cfg, args.weather)
 
     zones_meta = None
     model = None
@@ -173,6 +200,11 @@ def cmd_run(args) -> int:
 
     if idf_path != str(job_dir / "model.idf"):
         shutil.copy(idf_path, job_dir / "model.idf")
+        from .idf_io import ensure_output_variables
+        added = ensure_output_variables(str(job_dir / "model.idf"))
+        if added:
+            print(f"[idf] added {len(added)} monthly output variable(s) "
+                  f"required for per-zone results")
 
     # 2) simulation
     _stage("simulate")
@@ -181,8 +213,23 @@ def cmd_run(args) -> int:
 
     # 3) results
     _stage("results")
-    results = write_results(str(ep_dir), str(job_dir / "results.json"), zones_meta)
+    quality = _quality(model if not args.idf else None, summary, zones_meta)
+    results = write_results(str(ep_dir), str(job_dir / "results.json"), zones_meta,
+                            cfg, quality)
     summary["totals"] = results["totals"]
+    summary["quality"] = quality
+    if quality["zone_source"] in ("IfcBuildingStorey", "Building"):
+        print(f"[quality] zones derived from {quality['zone_source']} bounding "
+              f"boxes: interior partitions are missing, results are indicative")
+    ep_quality = quality.get("energyplus", {})
+    if ep_quality.get("zones_not_enclosed"):
+        print(f"[quality] {ep_quality['zones_not_enclosed']} zone(s) not fully "
+              f"enclosed: volumes and infiltration are approximate")
+    area_check = quality.get("area_check") or {}
+    if area_check:
+        print(f"[quality] floor area {area_check['total_deviation_pct']:+.1f}% against "
+              f"the areas stated in the IFC ({area_check['zones_over_10pct']} of "
+              f"{area_check['compared']} zone(s) off by more than 10%)")
     _write_json(job_dir / "run_summary.json", summary)
     t = results["totals"]
     print(f"[done] zones={t['zone_count']} heating={t['heating_kwh']} kWh "
@@ -261,6 +308,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-o", "--output", required=True, help="output directory")
     sp.add_argument("--wwr", type=float, default=None, help="window-to-wall ratio fallback")
     sp.add_argument("--window-mode", choices=["auto", "wwr", "none"], default=None)
+    sp.add_argument("-w", "--weather", default=None,
+                    help=".epw used for site data (ground temperatures)")
     common(sp)
     sp.set_defaults(func=cmd_convert)
 

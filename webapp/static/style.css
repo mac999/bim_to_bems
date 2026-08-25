@@ -11,6 +11,7 @@
   --accent: #3987e5;
   --heat: #e66767;
   --cool: #3987e5;
+  --warn: #e0a458;
   --border: rgba(255, 255, 255, 0.10);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   color-scheme: dark;          /* native widgets (selects, file inputs, scrollbars) render dark */
@@ -136,6 +137,12 @@ button.ghost.danger:hover { color: #ff6b6b; border-color: #d03b3b; }
 .totals .kv { background: var(--surface-2); border-radius: 6px; padding: 7px 9px; }
 .totals .kv b { display: block; font-size: 15px; font-weight: 650; margin-top: 1px; }
 .totals .kv span { color: var(--muted); font-size: 10.5px; }
+.quality { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.quality span {
+  font-size: 10.5px; padding: 3px 7px; border-radius: 999px;
+  background: var(--surface-2); color: var(--muted); border: 1px solid var(--border);
+}
+.quality span.warn { color: var(--warn); border-color: currentColor; }
 .downloads { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
 .downloads a {
   color: var(--accent); font-size: 11.5px; text-decoration: none;

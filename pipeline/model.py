@@ -60,6 +60,7 @@ class WindowSurface:
     name: str
     vertices: np.ndarray  # (N,3) float, same winding as host surface
     host: Optional["Surface"] = None
+    subsurface_type: str = "Window"  # Window | Door
 
     @property
     def area(self) -> float:
@@ -95,6 +96,8 @@ class Zone:
     ifc_guid: str = ""
     long_name: str = ""
     storey: str = ""
+    profile: str = ""  # space profile key from config.space_profiles
+    ifc_area: float = 0.0  # floor area from the IFC quantity set, 0 when absent
     floor_area: float = 0.0  # m2
     volume: float = 0.0  # m3
     surfaces: list[Surface] = field(default_factory=list)
@@ -121,6 +124,7 @@ class BuildingModel:
     zones: list[Zone] = field(default_factory=list)
     context: list[ContextElement] = field(default_factory=list)
     north_axis_deg: float = 0.0
+    zone_source: str = "IfcSpace"  # IfcSpace | IfcBuildingStorey | Building
     notes: list[str] = field(default_factory=list)
 
     def zone_by_name(self, name: str) -> Optional[Zone]:
@@ -128,6 +132,54 @@ class BuildingModel:
             if z.name == name:
                 return z
         return None
+
+
+def quality_report(model: BuildingModel) -> dict:
+    """Conversion quality figures for results.json.
+
+    Zones built from a storey or building bounding box, a large share of
+    adiabatic surfaces or a floor area that disagrees with the IFC quantities
+    all mean the numbers should be read as an order of magnitude, not a value.
+    """
+    boundaries: dict[str, int] = {}
+    surfaces = windows = doors = 0
+    for z in model.zones:
+        for s in z.surfaces:
+            surfaces += 1
+            boundaries[s.boundary] = boundaries.get(s.boundary, 0) + 1
+            for w in s.windows:
+                if w.subsurface_type == "Door":
+                    doors += 1
+                else:
+                    windows += 1
+
+    report = {
+        "zone_source": model.zone_source,
+        "zone_count": len(model.zones),
+        "surface_count": surfaces,
+        "window_count": windows,
+        "door_count": doors,
+        "boundaries": boundaries,
+        "adiabatic_pct": round(100.0 * boundaries.get(ADIABATIC, 0) / surfaces, 1)
+        if surfaces else 0.0,
+        "north_axis_deg": model.north_axis_deg,
+        "notes": list(model.notes),
+    }
+
+    compared = [z for z in model.zones if z.ifc_area > 0 and z.floor_area > 0]
+    if compared:
+        ratios = sorted(z.floor_area / z.ifc_area for z in compared)
+        if 0.5 <= ratios[len(ratios) // 2] <= 2.0:  # else another area unit
+            geom = sum(z.floor_area for z in compared)
+            stated = sum(z.ifc_area for z in compared)
+            deviations = [abs(r - 1.0) * 100.0 for r in ratios]
+            report["area_check"] = {
+                "compared": len(compared),
+                "total_deviation_pct": round((geom / stated - 1.0) * 100.0, 1),
+                "max_deviation_pct": round(max(deviations), 1),
+                "zones_over_10pct": sum(1 for d in deviations if d > 10.0),
+            }
+    return report
 
 
 # ---------------------------------------------------------------------------

@@ -112,4 +112,12 @@ def _parse_err_summary(err_text: str) -> dict:
         warnings = err_text.count("** Warning **")
         severe = err_text.count("** Severe  **")
     fatal = err_text.count("**  Fatal  **")
-    return {"success": success, "warnings": warnings, "severe": severe, "fatal": fatal}
+    summary = {"success": success, "warnings": warnings, "severe": severe,
+               "fatal": fatal}
+    # geometry complaints worth showing next to the results
+    m = re.search(r"(\d+) zones are not fully enclosed", err_text)
+    summary["zones_not_enclosed"] = int(m.group(1)) if m else 0
+    m = re.search(r"There are (\d+) coincident/collinear vertices", err_text)
+    summary["coincident_vertices"] = int(m.group(1)) if m else 0
+    summary["volume_mismatch"] = "Zone Volumes differ" in err_text
+    return summary
