@@ -217,123 +217,81 @@ bim_to_bem/
 
 ## Known limitations & roadmap
 
-Scope and accuracy boundaries of the current pipeline. Read this before comparing the
-output against measured (metered) building energy.
+What the numbers are and are not. Read this before comparing the output against a
+utility bill.
 
-### 1. What the IFC does not contribute
+### 1. Not taken from the IFC
 
-| IFC data | Effect on the model |
+| IFC data | Effect |
 |---|---|
-| `IfcZone` grouping | spaces are never merged: a 20-space floor served by one AHU becomes 20 EnergyPlus zones |
-| HVAC / MEP entities (`IfcSystem`, `IfcBoiler`, `IfcChiller`, `IfcCoil`, `IfcFan`, …) | the mechanical design has **no effect** on the results |
-| Material and layer properties | six generic U-value assemblies are applied by surface type instead |
-| `IfcSite` latitude / longitude / elevation | the weather file defines the location (it would only matter for design-day sizing, which is not run) |
-| Second and further `IfcBuilding` | merged into one flat model; only the first building's name is kept |
+| `IfcZone` grouping | spaces are never merged — a 20-space floor on one AHU stays 20 zones |
+| HVAC / MEP entities | the mechanical design has **no effect** on the results |
+| Material and layer properties | six generic U-value assemblies are used instead |
+| `IfcSite` location | the weather file defines the site |
+| Second and further `IfcBuilding` | merged into one flat model |
 
-Thermal zones come from `IfcSpace` solids (one zone per space), or from storey bounding
-boxes when a model has no spaces, or from a single whole-building box as a last resort.
-Because zones are never merged, surface-to-surface matching between spaces dominates
-runtime on large models.
+Zones come from `IfcSpace` solids, or from storey / building bounding boxes when a model
+has no spaces. Every zone then gets the same ideal-loads system and a 20 / 26 °C
+thermostat, so two buildings with different mechanical designs give the same answer if
+their envelopes match.
 
-Every zone then receives the same synthetic system: a dual-setpoint thermostat
-(20 / 26 °C), a `ZoneHVAC:IdealLoadsAirSystem` with unlimited capacity, and ASHRAE 62.1
-outdoor air. Two buildings with radically different mechanical designs produce identical
-output if their envelopes match.
+### 2. Load, not metered energy
 
-### 2. Results are zone *load*; energy use is an estimate on top
+- `heating_kwh` / `cooling_kwh` are **thermal demand** from a lossless ideal-loads
+  system: no COP or part-load behaviour, boiler efficiency, fan and pump power, duct
+  losses, heat recovery, economizer or defrost.
+- `energy_kwh` divides that demand by the constant factors in `config.json` →
+  `efficiency` and adds the reported lighting and equipment electricity. It is a
+  bill-scale sanity check, not a plant model, and end uses outside the model (hot water,
+  lifts, external lighting) are not counted.
+- No design days and no sizing run, so peak loads and equipment capacities are missing.
+- Monthly output only: the reported minimum / maximum temperatures are extremes of
+  monthly means, not hourly peaks.
 
-The pipeline solves nothing itself — it writes an IDF, runs EnergyPlus and reads the
-monthly zone heating and cooling energy back. Because the ideal-loads system is
-lossless, `heating_kwh` / `cooling_kwh` are **thermal demand**: no COP or part-load
-performance, no boiler efficiency, no fan or pump power, no duct and pipe losses, and no
-heat recovery, economizer or defrost.
+### 3. Modelling assumptions
 
-`heating_energy_kwh` / `cooling_energy_kwh` convert that demand into estimated delivered
-energy using the constant factors in `config.json` → `efficiency`, and `energy_kwh` adds
-the reported lighting and equipment electricity on top. That is a bill-scale sanity
-check, not a plant model: the factors ignore load, outdoor temperature and run hours,
-auxiliary energy is missing, and end uses outside the model (hot water, lifts, external
-lighting) are not counted at all. A real comparison needs a modelled plant.
+- Space profiles are keyword-matched, so an unnamed space falls back to the office
+  defaults. One occupancy schedule for every zone, no daylighting control.
+- Infiltration is a constant 0.5 ACH; no natural ventilation or operable windows.
+- Solar is distributed onto the floor, exterior reflections are ignored and surrounding
+  buildings never become shading surfaces.
+- Windows and doors are rectangles inscribed in external walls, without frame or
+  shading device; interior doors are dropped.
+- Geometry is simplified: holes and tiny surfaces are discarded, surfaces with very many
+  vertices become their convex hull, curves are faceted.
+- Interior surfaces that lost their pair become adiabatic rather than exterior.
+- Ground contact is the weather-file profile damped towards the heating setpoint by a
+  single factor — not a slab model.
 
-Two further reporting limits: no sizing run and no design days, so peak loads and
-equipment capacities are never produced; and monthly output only, so annual figures are
-sums of months and the reported minimum / maximum temperatures are extremes of monthly
-means, not hourly peaks.
-
-### 3. Other simplifying assumptions
-
-- **Internal loads are keyword-matched.** Space profiles are picked by substring in the
-  space name or `IfcSpace.LongName`, not by an IFC classification, so an unnamed or
-  unusually named space falls back to the office defaults. Within a profile every zone
-  shares the same densities and occupancy schedule, and there are no daylighting
-  controls.
-- **Constant infiltration.** 0.5 ACH around the clock, driven by neither wind nor
-  temperature difference. No natural ventilation or operable windows.
-- **Simplified solar.** Transmitted solar is distributed onto the floor and exterior
-  reflections are ignored; surrounding buildings are drawn in the viewer but never
-  written as shading surfaces.
-- **Openings are rectangles on external walls.** Windows and doors are inscribed as a
-  shrunk rectangle in the best-matching external wall, without frame, divider or shading
-  control. Interior doors and openings that miss an external wall are dropped, and the
-  `wwr` / `none` window modes place no doors at all.
-- **Geometry is simplified.** Holes other than windows and doors are discarded, tiny
-  surfaces are dropped, surfaces with very many vertices are replaced by their convex
-  hull (which inflates concave walls), curves are faceted, and shoebox-fallback zone
-  volumes are bounding boxes.
-- **Unmatched interior surfaces become adiabatic** rather than exposed outdoors — safer
-  than a wrong exterior boundary, but it removes a real heat path.
-- **Ground contact is a damped weather-file profile.** Undisturbed monthly ground
-  temperatures are blended towards the heating setpoint by a single factor
-  (`site.ground_coupling`), which is not a slab or ground-domain model and carries no
-  perimeter insulation.
-
-The `quality` block in `results.json` reports how the conversion went — zone source,
-adiabatic share, floor-area deviation against the IFC, unenclosed zones — but it is a
-plausibility check, not validation: passing it does not make the absolute numbers
-correct.
+The `quality` block in `results.json` reports zone source, adiabatic share, floor-area
+deviation against the IFC and the EnergyPlus geometry warnings. It flags a conversion
+that is too coarse to trust; it does not make the numbers correct.
 
 ### 4. Hand-written IDF input
 
-An IDF supplied directly is simulated essentially as written — only the monthly output
-variables needed for per-zone results are appended — and it is re-read just far enough
-to draw the viewer, by a text reader rather than a validating parser:
+Supplied IDFs run as written (only the monthly output variables the parser needs are
+appended), and are re-read by a text reader rather than a validating parser:
 
 - Only `Zone`, `BuildingSurface:Detailed` and `FenestrationSurface:Detailed` are drawn.
-  The simplified geometry objects (`Wall:Exterior`, `Roof`, `Window`, `Door`, …),
-  shading surfaces and internal mass are invisible, so such a model renders empty even
-  though the simulation succeeds.
-- Vertex blocks are located heuristically, so EpMacro / `##include` files and commas
-  inside quoted names break the reader. No version check or version transition is done.
-- Relative coordinates are resolved per zone (origin, relative north, multiplier), but
-  the building north axis is not applied — a rotated building is drawn in model
-  orientation, the same convention the IFC path uses.
-- Zone floor area and volume are re-derived from the geometry rather than read from the
-  `Zone` object: area is the floor surfaces times the multiplier (a zone without a floor
-  surface gets 0 m², hence no kWh/m²) and volume is that area times the zone height,
-  which overestimates sloped or stepped zones.
-- Only monthly variables are read. Ideal-loads output is preferred and a real air system
-  is picked up through its zone sensible heating / cooling variables, but other
-  reporting frequencies are skipped, and per-surface results rely on the pipeline's own
-  surface naming, so externally named surfaces drop out.
-- `config.json` mostly does not apply: setpoints, loads, constructions and the run
-  period come from the IDF, and only the EnergyPlus location, weather file, timeout and
-  efficiency factors still come from the config. The IDF is copied into the job folder
-  without its side files, so relative `Schedule:File` / `##include` references may not
-  resolve.
+  Simplified geometry objects, shading surfaces and internal mass stay invisible.
+- Vertex blocks are located heuristically, so EpMacro / `##include` files break the
+  reader. No version transition is attempted.
+- Relative coordinates are resolved per zone, but the building north axis is not applied.
+- Zone area and volume are derived from the geometry times the multiplier; a zone with
+  no floor surface gets 0 m² and therefore no kWh/m².
+- Monthly variables only, and per-surface results rely on the pipeline's own surface
+  naming.
+- `config.json` barely applies — setpoints, loads, constructions and the run period come
+  from the IDF — and side files referenced by relative path are not copied.
 
 ### Roadmap
 
-1. **`IfcZone` support** — merge the spaces of a zone into one EnergyPlus zone (or group
-   them at the reporting layer) and expose the zone name and function in the results.
+1. **`IfcZone` support** — merge the spaces of a zone, or group them when reporting.
 2. **System discovery** — follow the IFC route from a zone to the system serving it and
-   map it to a real air loop with coils and fans, replacing the constant efficiency
-   factors with a modelled plant.
-3. **Construction take-off** — read material layer sets from the IFC instead of applying
-   the six generic assemblies.
-4. **Wider IDF coverage** — support the simplified surface objects and the building
-   north axis so externally authored models render in full.
-5. **Peak loads** — add design days and a sizing run so capacities can be reported next
-   to annual demand.
+   model a real air loop instead of applying constant efficiency factors.
+3. **Construction take-off** — read material layer sets instead of generic assemblies.
+4. **Wider IDF coverage** — simplified surface objects and the building north axis.
+5. **Peak loads** — design days and a sizing run alongside the annual demand.
 
 # License
 MIT License
